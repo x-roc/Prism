@@ -1,86 +1,82 @@
-name: Build Prism Native AOT
+name: Release Native AOT Builds
 
 on:
-  push:
-    tags:
-      - 'v*'
+  release:
+    types: [published]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
-  build-linux:
-    runs-on: ubuntu-latest
+  build:
+    name: Build ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows-x64
+            os: windows-latest
+            rid: win-x64
+            ext: .exe
+          - name: linux-x64
+            os: ubuntu-latest
+            rid: linux-x64
+            ext: ""
+          - name: macos-x64
+            os: macos-13
+            rid: osx-x64
+            ext: ""
+          - name: macos-arm64
+            os: macos-14
+            rid: osx-arm64
+            ext: ""
+    runs-on: ${{ matrix.os }}
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '10.0.x'
-      - name: Publish Linux-x64 Native AOT
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore src/Prism.csproj
+
+      - name: Publish Native AOT single-file
+        shell: bash
         run: |
-          dotnet publish -c Release -r linux-x64 /home/runner/work/${{ github.event.repository.name }}/${{ github.event.repository.name }}/Prism/Prism.csproj /p:PublishAot=true
-      - name: Upload Linux Artifact
+          set -euo pipefail
+          dotnet publish src/Prism.csproj \
+            -c Release \
+            -r "${{ matrix.rid }}" \
+            --self-contained true \
+            -p:PublishAot=true \
+            -p:PublishSingleFile=true \
+            -p:PublishTrimmed=true \
+            -p:SelfContained=true \
+            -p:IlcOptimizationPreference=Size \
+            -p:InvariantGlobalization=true \
+            -p:EnableCompressionInSingleFile=true \
+            -p:StripSymbols=true \
+            -p:DebuggerSupport=false \
+            -p:StackTraceSupport=false \
+            -p:EventSourceSupport=false \
+            -o "artifacts/${{ matrix.name }}"
+
+      - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: prism-linux-x64
-          path: Prism/bin/Release/net10.0/linux-x64/publish/Prism
+          name: Prism-${{ matrix.name }}
+          path: artifacts/${{ matrix.name }}/Prism*
 
-  build-windows:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '10.0.x'
-      - name: Publish Win-x64 Native AOT
-        run: |
-          dotnet publish -c Release -r win-x64 Prism/Prism.csproj /p:PublishAot=true
-      - name: Upload Windows Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: prism-win-x64
-          path: Prism\bin\Release\net10.0\win-x64\publish\Prism.exe
-
-  build-macos:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '10.0.x'
-      - name: Publish MacOS-x64 Native AOT
-        run: |
-          dotnet publish -c Release -r osx-x64 Prism/Prism.csproj /p:PublishAot=true
-      - name: Upload MacOS Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: prism-osx-x64
-          path: Prism/bin/Release/net10.0/osx-x64/publish/Prism
-
-  release:
-    needs: [build-linux, build-windows, build-macos]
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: prism-linux-x64
-          path: ./artifacts/linux-x64
-      - uses: actions/download-artifact@v4
-        with:
-          name: prism-win-x64
-          path: ./artifacts/win-x64
-      - uses: actions/download-artifact@v4
-        with:
-          name: prism-osx-x64
-          path: ./artifacts/osx-x64
-      - name: Create Release
+      - name: Upload release asset
+        if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            ./artifacts/linux-x64/Prism
-            ./artifacts/win-x64/Prism.exe
-            ./artifacts/osx-x64/Prism
+            artifacts/${{ matrix.name }}/Prism*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
